@@ -12,6 +12,21 @@ const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL, // e.g., postgres://user:password@localhost:5432/church_db
 });
 
+
+// This tells us immediately if the database is working
+pool.connect((err, client, release) => {
+  if (err) {
+    return console.error('❌ Database connection error:', err.stack);
+  }
+  client.query('SELECT NOW()', (err, result) => {
+    release();
+    if (err) {
+      return console.error('❌ Query error:', err.stack);
+    }
+    console.log('✅ Connected to Postgres at:', result.rows[0].now);
+  });
+});
+
 // Helper to get Country Short Form
 const getCountryCode = (country) => {
   const codes = { "Nigeria": "NG", "Ghana": "GH", "United Kingdom": "UK", "USA": "US" };
