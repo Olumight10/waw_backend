@@ -4,16 +4,20 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
 const app = express();
+const PORT = process.env.PORT || 5000;
+
 app.use(cors());
 app.use(express.json());
 
+// 1. DATABASE CONFIGURATION
 const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL, // e.g., postgres://user:password@localhost:5432/church_db
+  connectionString: process.env.DATABASE_URL,
+  // ssl: { rejectUnauthorized: false } // Uncomment for Render/Supabase
 });
 
-
-// This tells us immediately if the database is working
+// 2. CONNECTION CHECK
 pool.connect((err, client, release) => {
   if (err) {
     return console.error('❌ Database connection error:', err.stack);
@@ -27,24 +31,44 @@ pool.connect((err, client, release) => {
   });
 });
 
-// Helper to get Country Short Form
+// 3. HELPERS
 const getCountryCode = (country) => {
-  const codes = { "Nigeria": "NG", "Ghana": "GH", "United Kingdom": "UK", "USA": "US" };
-  return codes[country] || country.substring(0, 2).toUpperCase();
+  const codes = { 
+    "Nigeria": "NG", 
+    "Ghana": "GH", 
+    "United Kingdom": "UK", 
+    "USA": "US",
+    "Canada": "CA" 
+  };
+  return codes[country] || (country ? country.substring(0, 2).toUpperCase() : "XX");
 };
 
+// 4. API ROUTES
+
+/**
+ * POST /api/register
+ * Saves all user details and generates sequential WWW-0000X-XX code
+ */
 app.post('/api/register', async (req, res) => {
-  const { full_name, email, phone_number, country, city_state, chapter, special_requirements } = req.body;
+  // These names now match your RegistrationLayout state exactly
+  const { 
+    full_name, 
+    email, 
+    phone_number, 
+    country, 
+    city_state, 
+    chapter, 
+    special_requirements 
+  } = req.body;
+
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    // 1. Get the country short code
     const countryShort = getCountryCode(country);
 
-    // 2. Insert the user and generate the unique_code based on the new ID
-    // We use a subquery to get the nextval of the table's ID sequence
+    // Insert user - using phone_number as plain text password
     const insertQuery = `
       INSERT INTO registrations 
       (full_name, email, phone_number, country, city_state, chapter, special_requirements, password, unique_code)
@@ -62,8 +86,8 @@ app.post('/api/register', async (req, res) => {
       city_state, 
       chapter, 
       special_requirements, 
-      phone_number, // Default password
-      countryShort  // Used for the suffix
+      phone_number, // Storing as plain text
+      countryShort
     ];
 
     const result = await client.query(insertQuery, values);
@@ -77,29 +101,36 @@ app.post('/api/register', async (req, res) => {
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error(err);
+    console.error('Registration Error:', err);
+    
     if (err.code === '23505') {
-      return res.status(400).json({ error: "Email already registered." });
+      return res.status(400).json({ error: "This email is already registered." });
     }
-    res.status(500).json({ error: "Database error" });
+    res.status(500).json({ error: "Internal server error" });
   } finally {
     client.release();
   }
 });
 
-
+/**
+ * POST /api/update-password
+ * Updates the plain text password
+ */
 app.post('/api/update-password', async (req, res) => {
   const { unique_code, password } = req.body;
+
   try {
-    await pool.query(
-      "UPDATE registrations SET password = $1 WHERE unique_code = $2",
-      [password, unique_code]
-    );
+    const updateQuery = "UPDATE registrations SET password = $1 WHERE unique_code = $2";
+    await pool.query(updateQuery, [password, unique_code]);
+
     res.json({ message: "Password updated successfully" });
   } catch (err) {
+    console.error('Update Password Error:', err);
     res.status(500).json({ error: "Failed to update password" });
   }
 });
 
-
-app.listen(5000, () => console.log('Server running on port 5000'));
+// 5. START SERVER
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
