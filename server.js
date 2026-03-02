@@ -95,6 +95,8 @@ app.post('/api/register', async (req, res) => {
     "UPDATE registrations SET unique_code = $1 WHERE id = $2",
     [uniqueCode, newId]
     );
+    
+    await client.query('COMMIT');
 
     res.status(201).json({
       message: "Registration Successful",
