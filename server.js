@@ -69,34 +69,37 @@ app.post('/api/register', async (req, res) => {
     const countryShort = getCountryCode(country);
 
     // Insert user - using phone_number as plain text password
-    const insertQuery = `
-      INSERT INTO registrations 
-      (full_name, email, phone_number, country, city_state, chapter, special_requirements, password, unique_code)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 
-        'WWW-' || LPAD(nextval('registrations_id_seq')::text, 5, '0') || '-' || $9
-      )
-      RETURNING unique_code, password;
+    const insertUser = `
+    INSERT INTO registrations 
+    (full_name, email, phone_number, country, city_state, chapter, special_requirements, password)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    RETURNING id;
     `;
 
-    const values = [
-      full_name, 
-      email, 
-      phone_number, 
-      country, 
-      city_state, 
-      chapter, 
-      special_requirements, 
-      phone_number, // Storing as plain text
-      countryShort
-    ];
+    const userResult = await client.query(insertUser, [
+    full_name,
+    email,
+    phone_number,
+    country,
+    city_state,
+    chapter,
+    special_requirements,
+    phone_number
+    ]);
 
-    const result = await client.query(insertQuery, values);
-    await client.query('COMMIT');
+    const newId = userResult.rows[0].id;
+
+    const uniqueCode = `WWW-${String(newId).padStart(5, '0')}-${countryShort}`;
+
+    await client.query(
+    "UPDATE registrations SET unique_code = $1 WHERE id = $2",
+    [uniqueCode, newId]
+    );
 
     res.status(201).json({
       message: "Registration Successful",
-      unique_code: result.rows[0].unique_code,
-      password: result.rows[0].password
+      unique_code: uniqueCode,
+      password: phone_number
     });
 
   } catch (err) {
