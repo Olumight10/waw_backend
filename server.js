@@ -130,6 +130,27 @@ app.post('/api/update-password', async (req, res) => {
   }
 });
 
+
+// GET /api/user/:code
+app.get('/api/user/:code', async (req, res) => {
+  try {
+    const { code } = req.params;
+    const userRes = await pool.query(
+      "SELECT full_name, unique_code, email, phone_number FROM registrations WHERE unique_code = $1", 
+      [code]
+    );
+
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json(userRes.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 // 5. START SERVER
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
