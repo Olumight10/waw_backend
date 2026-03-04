@@ -49,6 +49,43 @@ const getCountryCode = (country) => {
  * POST /api/register
  * Saves all user details and generates sequential WWW-0000X-XX code
  */
+app.post("/api/login", async (req, res) => {
+  const { unique_code, password } = req.body;
+
+  if (!unique_code || !password) {
+    return res.status(400).json({
+      error: "Unique code and password are required.",
+    });
+  }
+
+  try {
+    const userRes = await pool.query(
+      "SELECT full_name, unique_code, password FROM registrations WHERE unique_code = $1",
+      [unique_code]
+    );
+
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const user = userRes.rows[0];
+
+    if (user.password !== password) {
+      return res.status(401).json({ error: "Invalid password" });
+    }
+
+    res.json({
+      message: "Login successful",
+      unique_code: user.unique_code,
+      full_name: user.full_name,
+    });
+
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 app.post('/api/register', async (req, res) => {
   // These names now match your RegistrationLayout state exactly
   const { 
@@ -61,12 +98,40 @@ app.post('/api/register', async (req, res) => {
     special_requirements 
   } = req.body;
 
+  // ✅ REQUIRED FIELD VALIDATION (PUT IT HERE)
+  if (!full_name || !email || !phone_number || !country || !city_state) {
+    return res.status(400).json({
+      error: "Full name, email, phone number, country and state are required."
+    });
+  }
+
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
+
+    // 2️⃣ 🔥 PUT DUPLICATE CHECK RIGHT HERE
+    const existingUser = await client.query(
+      `SELECT unique_code FROM registrations 
+       WHERE full_name = $1 
+       AND email = $2 
+       AND phone_number = $3`,
+      [full_name, email, phone_number]
+    );
+
+    if (existingUser.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: "Account already exists",
+        existing: true,
+        unique_code: existingUser.rows[0].unique_code
+      });
+    }
+
+
     const countryShort = getCountryCode(country);
+    const defaultPassword = phone_number + "#";
 
     // Insert user - using phone_number as plain text password
     const insertUser = `
@@ -84,12 +149,12 @@ app.post('/api/register', async (req, res) => {
     city_state,
     chapter,
     special_requirements,
-    phone_number
+    defaultPassword
     ]);
 
     const newId = userResult.rows[0].id;
 
-    const uniqueCode = `WWW-${String(newId).padStart(5, '0')}-${countryShort}`;
+    const uniqueCode = `WAW-${String(newId).padStart(5, '0')}-${countryShort}`;
 
     await client.query(
     "UPDATE registrations SET unique_code = $1 WHERE id = $2",
@@ -101,7 +166,7 @@ app.post('/api/register', async (req, res) => {
     res.status(201).json({
       message: "Registration Successful",
       unique_code: uniqueCode,
-      password: phone_number
+      password: defaultPassword
     });
 
   } catch (err) {
