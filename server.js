@@ -49,6 +49,8 @@ const getCountryCode = (country) => {
  * POST /api/register
  * Saves all user details and generates sequential WWW-0000X-XX code
  */
+
+// POST /api/login
 app.post("/api/login", async (req, res) => {
   const { unique_code, password } = req.body;
 
@@ -200,6 +202,97 @@ app.post('/api/update-password', async (req, res) => {
   }
 });
 
+
+
+// 5. RECOVERY ROUTES
+
+/**
+ * POST /api/forgot-password
+ * Verifies 3 out of 4 fields to allow a password update
+ * Fields: unique_code, email, phone_number, full_name
+ */
+app.post('/api/forgot-password', async (req, res) => {
+    const { unique_code, email, phone_number, full_name, new_password } = req.body;
+    
+    try {
+        // Check for record matching at least 3 identifying fields
+        const checkUser = await pool.query(
+            `SELECT id FROM registrations 
+             WHERE (unique_code = $1 AND email = $2 AND phone_number = $3)
+                OR (unique_code = $1 AND email = $2 AND full_name = $4)
+                OR (unique_code = $1 AND phone_number = $3 AND full_name = $4)
+                OR (email = $2 AND phone_number = $3 AND full_name = $4)`,
+            [unique_code, email, phone_number, full_name]
+        );
+
+        if (checkUser.rows.length === 0) {
+            return res.status(404).json({ error: "Verification failed. Details do not match our records." });
+        }
+
+        await pool.query("UPDATE registrations SET password = $1 WHERE id = $2", [new_password, checkUser.rows[0].id]);
+        res.json({ message: "Password reset successfully" });
+    } catch (err) {
+        res.status(500).json({ error: "Server error during recovery" });
+    }
+});
+
+/**
+ * POST /api/forgot-code
+ * Verifies 3 out of 4 fields to retrieve the unique code
+ * Fields: full_name, email, phone_number, password
+ */
+// Add this to your server.js API ROUTES section [cite: 56]
+
+// FORGOT PASSWORD: Verifies 3 of 4 to update password
+app.post('/api/forgot-password', async (req, res) => {
+    const { unique_code, email, phone_number, full_name, new_password } = req.body;
+    
+    try {
+        const checkUser = await pool.query(
+            `SELECT id FROM registrations 
+             WHERE (unique_code = $1 AND email = $2 AND phone_number = $3)
+                OR (unique_code = $1 AND email = $2 AND full_name = $4)
+                OR (unique_code = $1 AND phone_number = $3 AND full_name = $4)
+                OR (email = $2 AND phone_number = $3 AND full_name = $4)`,
+            [unique_code, email, phone_number, full_name]
+        );
+
+        if (checkUser.rows.length === 0) {
+            return res.status(404).json({ error: "Verification failed. Details do not match." });
+        }
+
+        await pool.query("UPDATE registrations SET password = $1 WHERE id = $2", [new_password, checkUser.rows[0].id]);
+        res.json({ message: "Password updated successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Server error" });
+    }
+});
+
+// FORGOT UNIQUE CODE: Verifies 3 of 4 to return the code
+app.post('/api/forgot-code', async (req, res) => {
+    const { full_name, email, phone_number, password } = req.body;
+
+    try {
+        const result = await pool.query(
+            `SELECT unique_code FROM registrations 
+             WHERE (full_name = $1 AND email = $2 AND phone_number = $3)
+                OR (full_name = $1 AND email = $2 AND password = $4)
+                OR (full_name = $1 AND phone_number = $3 AND password = $4)
+                OR (email = $2 AND phone_number = $3 AND password = $4)`,
+            [full_name, email, phone_number, password]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Account not found." });
+        }
+
+        res.json({ unique_code: result.rows[0].unique_code });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Server error" });
+    }
+});
 
 // GET /api/user/:code
 app.get('/api/user/:code', async (req, res) => {
