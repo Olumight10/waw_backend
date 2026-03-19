@@ -128,6 +128,24 @@ app.get("/api/registration-log/:code", async (req, res) => {
         return res.json({ myRegistration: null, registeredByMe: [] });
     }
 
+    // Self Healing Logic for Time/Who
+    const tablesToUpdate = ['prog_reg_time', 'prog_reg_who'];
+    for (const table of tablesToUpdate) {
+        const check = await pool.query(`SELECT 1 FROM ${table} WHERE unique_code = $1`, [code]);
+        if (check.rows.length === 0) {
+            await pool.query(`INSERT INTO ${table} (unique_code) VALUES ($1)`, [code]);
+        }
+    }
+
+    const regCheck = await pool.query(`SELECT ${abbrev}_reg FROM prog_reg WHERE unique_code = $1`, [code]);
+    if (regCheck.rows.length > 0 && regCheck.rows[0][`${abbrev}_reg`] === 'Yes') {
+        const timeCheck = await pool.query(`SELECT ${abbrev}_reg_time FROM prog_reg_time WHERE unique_code = $1`, [code]);
+        if (!timeCheck.rows[0][`${abbrev}_reg_time`]) {
+            await pool.query(`UPDATE prog_reg_time SET ${abbrev}_reg_time = CURRENT_TIMESTAMP WHERE unique_code = $1`, [code]);
+            await pool.query(`UPDATE prog_reg_who SET ${abbrev}_reg_who = $1 WHERE unique_code = $1`, [code]);
+        }
+    }
+
     const myRegRes = await pool.query(`
       SELECT prt.${abbrev}_reg_time AS time, prw.${abbrev}_reg_who AS who
       FROM prog_reg_time prt
@@ -154,19 +172,15 @@ app.get("/api/registration-log/:code", async (req, res) => {
   }
 });
 
-// POST Register for Program (WITH STRICT VALIDATION)
+// POST Register for Program
 app.post("/api/program/register", async (req, res) => {
   const { unique_code, target_code, method, diet, prayer, amount_paid, currency } = req.body;
-  
-  // Clean up user inputs to prevent spacing errors
   const codeToRegister = (target_code || unique_code).trim();
-  
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    // VALIDATION 1: Check if the Unique Code exists in the database FIRST
     const userCheck = await client.query("SELECT 1 FROM registrations WHERE unique_code = $1", [codeToRegister]);
     if (userCheck.rows.length === 0) {
       throw new Error(`This user (${codeToRegister}) cannot be found.`);
@@ -177,14 +191,13 @@ app.post("/api/program/register", async (req, res) => {
     
     const abbrev = getCleanAbbrev(activeEventRes.rows[0].abbrev);
 
-    // VALIDATION 2: Check if user is ALREADY registered
     const regCheck = await client.query(`SELECT ${abbrev}_reg FROM prog_reg WHERE unique_code = $1`, [codeToRegister]);
     if (regCheck.rows.length > 0 && regCheck.rows[0][`${abbrev}_reg`] === 'Yes') {
       throw new Error(`This user (${codeToRegister}) is already registered for this event.`);
     }
 
-    // Ensure missing rows are created for users before updating
-    const tablesToUpdate = ['prog_reg', 'prog_method', 'prog_diet', 'prog_prayer', 'prog_reg_time', 'prog_reg_who'];
+    // ADDED prog_online TO THE AUTO-UPDATE LIST
+    const tablesToUpdate = ['prog_reg', 'prog_method', 'prog_diet', 'prog_prayer', 'prog_reg_time', 'prog_reg_who', 'prog_online'];
     for (const table of tablesToUpdate) {
         const check = await client.query(`SELECT 1 FROM ${table} WHERE unique_code = $1`, [codeToRegister]);
         if (check.rows.length === 0) {
@@ -197,7 +210,6 @@ app.post("/api/program/register", async (req, res) => {
     await client.query(`UPDATE prog_diet SET ${abbrev}_diet = $1 WHERE unique_code = $2`, [diet, codeToRegister]);
     await client.query(`UPDATE prog_prayer SET ${abbrev}_prayer = $1 WHERE unique_code = $2`, [prayer, codeToRegister]);
     
-    // Time and Who Updates
     await client.query(`UPDATE prog_reg_time SET ${abbrev}_reg_time = CURRENT_TIMESTAMP WHERE unique_code = $1`, [codeToRegister]);
     await client.query(`UPDATE prog_reg_who SET ${abbrev}_reg_who = $1 WHERE unique_code = $2`, [unique_code, codeToRegister]);
 
@@ -206,11 +218,7 @@ app.post("/api/program/register", async (req, res) => {
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error("Program Reg Error:", err.message);
-    
-    // Check if the error is our custom validation error and pass it cleanly to the frontend
     const isCustomError = err.message.includes("cannot be found") || err.message.includes("already registered") || err.message.includes("No active event");
-    
     res.status(isCustomError ? 400 : 500).json({ error: err.message || "Registration failed" });
   } finally {
     client.release();
@@ -230,8 +238,12 @@ app.post("/api/program/join-online", async (req, res) => {
     const abbrev = getCleanAbbrev(event.abbrev);
     const colName = `${abbrev}_online`;
 
-    const sessionRes = await pool.query(`SELECT ${colName} FROM prog_online WHERE unique_code = $1`, [unique_code]);
-    if (sessionRes.rows.length === 0) return res.status(404).json({ error: "User not found" });
+    // Fetch user. If not found, SELF HEAL by generating the row!
+    let sessionRes = await pool.query(`SELECT ${colName} FROM prog_online WHERE unique_code = $1`, [unique_code]);
+    if (sessionRes.rows.length === 0) {
+      await pool.query(`INSERT INTO prog_online (unique_code) VALUES ($1)`, [unique_code]);
+      sessionRes = await pool.query(`SELECT ${colName} FROM prog_online WHERE unique_code = $1`, [unique_code]);
+    }
 
     const currentIp = sessionRes.rows[0][colName];
 
@@ -348,11 +360,12 @@ app.post('/api/register', async (req, res) => {
     await client.query("INSERT INTO prog_prayer (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO notifications (unique_code, login) VALUES ($1, CURRENT_TIMESTAMP)", [uniqueCode]);
 
-    // Initialize NEW Time/Who Tables
+    // Initialize NEW Time/Who/Online Tables
     await client.query("INSERT INTO prog_reg_time (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO prog_reg_who (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO prog_att_time (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO prog_att_who (unique_code) VALUES ($1)", [uniqueCode]);
+    await client.query("INSERT INTO prog_online (unique_code) VALUES ($1)", [uniqueCode]); // ADDED THIS
 
     await ensureActiveProgramColumns(client);
     await client.query('COMMIT');
