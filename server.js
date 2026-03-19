@@ -32,7 +32,6 @@ pool.connect((err, client, release) => {
 });
 
 // 2. HELPERS
-// 2. HELPERS
 const getCountryCode = (country) => {
   const codes = { "Nigeria": "NG", "Ghana": "GH", "United Kingdom": "UK", "USA": "US", "Canada": "CA" };
   return codes[country] || (country ? country.substring(0, 2).toUpperCase() : "XX");
@@ -196,7 +195,6 @@ app.post("/api/program/register", async (req, res) => {
       throw new Error(`This user (${codeToRegister}) is already registered for this event.`);
     }
 
-    // ADDED prog_online TO THE AUTO-UPDATE LIST
     const tablesToUpdate = ['prog_reg', 'prog_method', 'prog_diet', 'prog_prayer', 'prog_reg_time', 'prog_reg_who', 'prog_online'];
     for (const table of tablesToUpdate) {
         const check = await client.query(`SELECT 1 FROM ${table} WHERE unique_code = $1`, [codeToRegister]);
@@ -238,7 +236,6 @@ app.post("/api/program/join-online", async (req, res) => {
     const abbrev = getCleanAbbrev(event.abbrev);
     const colName = `${abbrev}_online`;
 
-    // Fetch user. If not found, SELF HEAL by generating the row!
     let sessionRes = await pool.query(`SELECT ${colName} FROM prog_online WHERE unique_code = $1`, [unique_code]);
     if (sessionRes.rows.length === 0) {
       await pool.query(`INSERT INTO prog_online (unique_code) VALUES ($1)`, [unique_code]);
@@ -261,12 +258,12 @@ app.post("/api/program/join-online", async (req, res) => {
   }
 });
 
-// GET user info
+// GET user info (ADDED s.detail)
 app.get('/api/user/:code', async (req, res) => {
   try {
     const { code } = req.params;
     const userRes = await pool.query(`
-      SELECT r.*, s.status, s.scope, p.picture 
+      SELECT r.*, s.status, s.scope, s.detail, p.picture 
       FROM registrations r 
       LEFT JOIN status s ON r.unique_code = s.unique_code 
       LEFT JOIN prof_pic p ON r.unique_code = p.unique_code 
@@ -317,7 +314,7 @@ app.post("/api/logout", async (req, res) => {
   }
 });
 
-// POST Register (New Account)
+// POST Register (New Account) - ADDED detail
 app.post('/api/register', async (req, res) => {
   const { full_name, email, phone_number, country, city_state, chapter } = req.body;
 
@@ -352,7 +349,7 @@ app.post('/api/register', async (req, res) => {
     await client.query(insertUser, [newId, full_name, email, phone_number, country, city_state, chapter, defaultPassword, uniqueCode]);
 
     await client.query("INSERT INTO prof_pic (unique_code, picture) VALUES ($1, 'nil')", [uniqueCode]);
-    await client.query("INSERT INTO status (unique_code, status, scope) VALUES ($1, 'member', 'Nil')", [uniqueCode]);
+    await client.query("INSERT INTO status (unique_code, status, scope, detail) VALUES ($1, 'member', 'Nil', 'Nil')", [uniqueCode]);
     await client.query("INSERT INTO prog_reg (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO prog_attend (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO prog_method (unique_code) VALUES ($1)", [uniqueCode]);
@@ -360,12 +357,11 @@ app.post('/api/register', async (req, res) => {
     await client.query("INSERT INTO prog_prayer (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO notifications (unique_code, login) VALUES ($1, CURRENT_TIMESTAMP)", [uniqueCode]);
 
-    // Initialize NEW Time/Who/Online Tables
     await client.query("INSERT INTO prog_reg_time (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO prog_reg_who (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO prog_att_time (unique_code) VALUES ($1)", [uniqueCode]);
     await client.query("INSERT INTO prog_att_who (unique_code) VALUES ($1)", [uniqueCode]);
-    await client.query("INSERT INTO prog_online (unique_code) VALUES ($1)", [uniqueCode]); // ADDED THIS
+    await client.query("INSERT INTO prog_online (unique_code) VALUES ($1)", [uniqueCode]);
 
     await ensureActiveProgramColumns(client);
     await client.query('COMMIT');
